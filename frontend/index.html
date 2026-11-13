@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Renewable Asset Fault & Anomaly Detection Copilot</title>
+  <style>
+    :root {
+      --bg: #f3f6fb;
+      --panel: #ffffff;
+      --line: #dfe8f3;
+      --primary: #12372a;
+      --primary-soft: #eaf8f0;
+      --text: #172033;
+      --muted: #4f5a70;
+      --danger: #b91c1c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: Arial, sans-serif; background: var(--bg); color: var(--text);
+    }
+    header {
+      background: linear-gradient(135deg, #12372a, #1f5b4a);
+      color: white; padding: 28px 40px;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .panel {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+      padding: 22px; margin-bottom: 18px; box-shadow: 0 8px 24px rgba(15,23,42,0.04);
+    }
+    h1 { margin: 0 0 8px; font-size: 34px; }
+    h2 { margin-top: 0; font-size: 22px; color: var(--primary); }
+    .topbar {
+      display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+    select, button {
+      font: inherit; border-radius: 10px; border: 1px solid var(--line); padding: 10px 12px;
+    }
+    select { min-width: 240px; }
+    button {
+      background: var(--primary); color: white; border: none; cursor: pointer; padding: 10px 16px;
+    }
+    .stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-top: 16px;
+    }
+    .metric {
+      background: var(--primary-soft); border: 1px solid #cfe7d4; border-radius: 12px; padding: 16px;
+    }
+    .metric strong { display: block; font-size: 22px; margin-top: 8px; }
+    .small { color: var(--muted); }
+    .anomaly-list { display: grid; gap: 12px; }
+    .anomaly-item {
+      border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: #fafcff;
+    }
+    .fault { color: var(--danger); font-weight: bold; }
+    ul { margin: 8px 0 0 18px; }
+    .table-wrap { max-height: 520px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+    table { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: 14px; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; }
+    th { position: sticky; top: 0; background: #eaf8f0; color: var(--primary); z-index: 1; }
+    tr.anomaly-row { background: #fff1f2; }
+    .table-note { margin: 0 0 12px; }
+    pre {
+      margin: 0; background: #0f172a; color: #edf6ff; border-radius: 12px; padding: 16px; overflow:auto;
+      white-space: pre-wrap; word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Renewable Asset Fault & Anomaly Detection Copilot</h1>
+      <div class="small">Detect abnormal renewable-asset behavior and explain likely causes in operator language.</div>
+    </div>
+  </header>
+  <main class="wrap">
+    <section class="panel">
+      <h2>Operator dashboard</h2>
+      <div class="topbar">
+        <label for="assetSelect">Asset</label>
+        <select id="assetSelect"></select>
+        <button id="runButton" onclick="runAnalysis()">Run anomaly check</button>
+      </div>
+      <div id="status" class="small">Loading asset list…</div>
+      <div id="stats" class="stats"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Top anomalies</h2>
+      <div id="anomalies" class="anomaly-list">No anomalies loaded yet.</div>
+    </section>
+
+    <section class="panel">
+      <h2>Telemetry data</h2>
+      <p class="small table-note">Values are taken directly from the CSV columns. Highlighted rows were flagged by the model.</p>
+      <div id="telemetry" class="table-wrap">Telemetry will appear after analysis runs.</div>
+    </section>
+
+    <section class="panel">
+      <h2>API response</h2>
+      <pre id="apiOutput">Waiting for data…</pre>
+    </section>
+  </main>
+
+  <script>
+    const apiOutput = document.getElementById('apiOutput');
+    const status = document.getElementById('status');
+    const stats = document.getElementById('stats');
+    const anomalies = document.getElementById('anomalies');
+    const telemetry = document.getElementById('telemetry');
+    const assetSelect = document.getElementById('assetSelect');
+    const runButton = document.getElementById('runButton');
+    const telemetryColumns = [
+      'timestamp_id',
+      'asset_id',
+      'hour',
+      'irradiance_wm2',
+      'wind_speed_ms',
+      'temperature_c',
+      'vibration_mm_s',
+      'power_mw',
+      'is_anomaly'
+    ];
+
+    function renderTelemetry(records) {
+      if (!Array.isArray(records) || records.length === 0) {
+        telemetry.textContent = 'No telemetry records were returned for this selection.';
+        return;
+      }
+
+      const table = document.createElement('table');
+      const head = table.createTHead().insertRow();
+      telemetryColumns.forEach(column => {
+        const cell = document.createElement('th');
+        cell.textContent = column;
+        head.appendChild(cell);
+      });
+
+      const body = table.createTBody();
+      records.forEach(record => {
+        const row = body.insertRow();
+        if (record.is_anomaly) {
+          row.classList.add('anomaly-row');
+        }
+        telemetryColumns.forEach(column => {
+          const cell = row.insertCell();
+          cell.textContent = column === 'is_anomaly'
+            ? (record[column] ? 'Yes' : 'No')
+            : String(record[column] ?? '');
+        });
+      });
+
+      telemetry.replaceChildren(table);
+    }
+
+    async function loadAssets() {
+      try {
+        const response = await fetch('/api/assets');
+        if (!response.ok) {
+          throw new Error(`Asset API returned HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        const assetList = data.assets;
+        if (!Array.isArray(assetList)) {
+          throw new Error('Asset API returned an invalid response.');
+        }
+        assetSelect.replaceChildren(new Option('All assets', ''));
+        assetList.forEach(asset => assetSelect.add(new Option(asset, asset)));
+        status.textContent = `Loaded ${assetList.length} assets in the telemetry dataset.`;
+      } catch (error) {
+        status.textContent = `API connection failed: ${error.message}. Open this dashboard from the running app URL, not as a local file.`;
+      }
+    }
+
+    async function runAnalysis() {
+      const assetId = assetSelect.value;
+      const payload = { asset_id: assetId, text: 'Review earliest abnormal operating conditions.' };
+      runButton.disabled = true;
+      status.textContent = 'Running anomaly detection…';
+      try {
+        const response = await fetch('/api/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.detail || `Analysis API returned HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        renderTelemetry(data.telemetry);
+        const responsePreview = {
+          ...data,
+          telemetry: `${data.telemetry.length} rows shown in the telemetry table`
+        };
+        apiOutput.textContent = JSON.stringify(responsePreview, null, 2);
+        status.textContent = `Analysis complete for ${data.summary.records} telemetry records.`;
+
+        const summary = data.summary || {};
+        const metrics = summary.model_performance || {};
+        stats.innerHTML = `
+          <div class="metric"><span>Selected asset</span><strong>${assetId || 'All assets'}</strong></div>
+          <div class="metric"><span>Records</span><strong>${summary.records ?? 0}</strong></div>
+          <div class="metric"><span>Anomalies</span><strong>${summary.anomaly_count ?? 0}</strong></div>
+          <div class="metric"><span>F1 score</span><strong>${(metrics.f1_score ?? 0).toFixed(3)}</strong></div>
+        `;
+
+        const list = data.top_anomalies || [];
+        if (!list.length) {
+          anomalies.innerHTML = '<div class="anomaly-item">No anomaly matches were found for the selected asset range.</div>';
+          return;
+        }
+
+        anomalies.innerHTML = list.map(item => `
+          <div class="anomaly-item">
+            <div><span class="fault">${item.likely_fault}</span> · ${item.asset_id} · hour ${item.hour}</div>
+            <div class="small">Confidence ${item.confidence}% · Severity ${item.severity}</div>
+            <p>${item.operator_summary}</p>
+            <ul>
+              ${item.recommended_checks.map(check => `<li>${check}</li>`).join('')}
+            </ul>
+            <div class="small">Temp ${item.temperature_c}°C · Vibration ${item.vibration_mm_s} mm/s · Output ${item.power_mw} MW</div>
+          </div>
+        `).join('');
+      } catch (error) {
+        status.textContent = `API request failed: ${error.message}`;
+        apiOutput.textContent = error.message;
+      } finally {
+        runButton.disabled = false;
+      }
+    }
+
+    loadAssets().then(() => {
+      if (assetSelect.options.length > 0) {
+        runAnalysis();
+      }
+    });
+  </script>
+</body>
+</html>
